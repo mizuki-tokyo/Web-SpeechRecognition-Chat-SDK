@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "output_dir": "audio_logs",
+  "max_files": 1000,
+  "last_updated": "2025-07-28T17:34:10.908787"
+}

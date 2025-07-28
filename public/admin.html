@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚙️  Speech Recognition Server Admin</title>
+    <link href="css/admin.css" rel="stylesheet"/>
+</head>
+<body>
+    <div class="container">
+        <h1>⚙️　 Speech Recognition Server Admin</h1>
+        
+        <div id="serverStatus">
+            <h2>Server Status</h2>
+            <div class="status-grid" id="statusGrid">
+                <!-- Status information is inserted dynamically -->
+            </div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Audio Log Settings</h2>
+        <div class="config-section">
+            <div class="form-group">
+                <label>Audio Log Output:</label>
+                <div class="toggle-switch">
+                    <label class="switch">
+                        <input type="checkbox" id="audioLogEnabled">
+                        <span class="slider"></span>
+                    </label>
+                    <span id="audioLogStatus">Disabled</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="outputDir">Output Directory:</label>
+                <input type="text" id="outputDir" placeholder="audio_logs">
+            </div>
+            
+            <div class="form-group">
+                <label for="maxFiles">Max Number of Files:</label>
+                <input type="number" id="maxFiles" min="10" max="10000" placeholder="1000">
+            </div>
+            
+            <div class="form-group">
+                <button class="btn" onclick="updateAudioLogConfig()">Save Settings</button>
+                <button class="btn success" onclick="loadAudioLogConfig()">Reload Settings</button>
+                <button class="btn" onclick="showConfigFiles()" style="background-color: #17a2b8;">View Config Files</button>
+            </div>
+            
+            <div id="configMessage"></div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>VAD (Voice Activity Detection) Settings</h2>
+        <div class="config-section">
+            <div class="form-group">
+                <label for="vadThreshold">VAD Threshold (0.0–1.0):</label>
+                <input type="number" id="vadThreshold" min="0.0" max="1.0" step="0.01" placeholder="0.5">
+                <small>Speech detection confidence threshold (0.0–1.0)</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="minSpeechDuration">Min Speech Duration (ms):</label>
+                <input type="number" id="minSpeechDuration" min="50" max="2000" placeholder="250">
+                <small>Ignore speech shorter than this</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="maxSpeechDuration">Max Speech Duration (s):</label>
+                <input type="number" id="maxSpeechDuration" min="1" max="120" step="0.1" placeholder="30.0">
+                <small>Cut speech longer than this</small>
+            </div>
+
+            <div class="form-group">
+                <label for="prefixSpeechPad">Speech Prefix Padding (ms):</label>
+                <input type="number" id="prefixSpeechPad" min="30" max="1000" placeholder="300">
+                <small>Helps prevents cutting off beginning of speech</small>
+            </div>            
+
+            <div class="form-group">
+                <label for="silenceDuration">Max Silence Duration (ms):</label>
+                <input type="number" id="silenceDuration" min="100" max="1500" placeholder="500">
+                <small>Speech considered finished after this silence</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="chunkSize">Processing Chunk Size:</label>
+                <input type="number" id="chunkSize" min="128" max="2048" placeholder="512">
+                <small>Number of samples per process (512≈32ms@16kH)</small>
+            </div>
+            
+            <div class="form-group">
+                <button class="btn" onclick="updateVADConfig()">Save VAD Settings</button>
+                <button class="btn success" onclick="loadVADConfig()">Reload VAD Settings</button>
+                <button class="btn" onclick="resetVADConfig()" style="background-color: #ffc107;">Reset to Default</button>
+                <button class="btn" onclick="showConfigFiles()" style="background-color: #17a2b8;">View Config Files</button>
+            </div>
+            
+            <div id="vadConfigMessage"></div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Audio Log File List</h2>
+        <div class="form-group">
+            <button class="btn" onclick="loadAudioLogs()">Refresh File List</button>
+        </div>
+        
+        <div id="audioLogSummary"></div>
+        <div class="log-files" id="audioLogFiles">
+            <!-- the file list is inserted dynamically -->
+        </div>
+    </div>
+
+    <script>
+        let currentAudio = null;
+        let currentPlayingFile = null;
+        
+        // 初期化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadServerStatus();
+            loadAudioLogConfig();
+            loadVADConfig();
+            loadAudioLogs();
+            
+            // 音声ログ有効/無効の切り替え
+            document.getElementById('audioLogEnabled').addEventListener('change', (e) => {
+                document.getElementById('audioLogStatus').textContent = e.target.checked ? 'Enabled' : 'Disabled';
+            });
+        });
+        
+        // サーバー状態を取得
+        async function loadServerStatus() {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                
+                const statusGrid = document.getElementById('statusGrid');
+                statusGrid.innerHTML = '';
+                
+                const statusItems = [
+                    { label: 'Server Status', value: data.status, type: data.status === 'healthy' ? 'healthy' : 'error' },
+                    { label: 'Active Sessions', value: data.active_sessions, type: 'healthy' },
+                    { label: 'VAD Model', value: data.vad_model_loaded ? 'Loaded' : 'Not Loaded', type: data.vad_model_loaded ? 'healthy' : 'error' },
+                    { label: 'Whisper Model', value: data.whisper_model_loaded ? 'Loaded' : 'Not Loaded', type: data.whisper_model_loaded ? 'healthy' : 'error' },
+                    { label: 'Audio Log', value: data.audio_logging_enabled ? 'Enabled' : 'Disabled', type: data.audio_logging_enabled ? 'healthy' : 'warning' },
+                    { label: 'Log Directory', value: data.audio_log_dir, type: 'healthy' },
+                    { label: 'Continuous Recognition', value: data.continuous_recognition? 'Enabled' : 'Disabled', type: 'healthy' }
+                ];
+                
+                statusItems.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = `status-card ${item.type}`;
+                    card.innerHTML = `
+                        <div style="font-weight: bold; margin-bottom: 5px;">${item.label}</div>
+                        <div>${item.value}</div>
+                    `;
+                    statusGrid.appendChild(card);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load server status:', error);
+                showMessage('Failed to load server status', 'error');
+            }
+        }
+        
+        // 音声ログ設定を取得
+        async function loadAudioLogConfig() {
+            try {
+                const response = await fetch('/config/audio-log');
+                const config = await response.json();
+                
+                document.getElementById('audioLogEnabled').checked = config.enabled;
+                document.getElementById('audioLogStatus').textContent = config.enabled ? 'Enabled' : 'Disabled';
+                document.getElementById('outputDir').value = config.output_dir;
+                document.getElementById('maxFiles').value = config.max_files;
+                
+            } catch (error) {
+                console.error('Failed to load audio log config:', error);
+                showMessage('Failed to load audio log config', 'error');
+            }
+        }
+        
+        // 音声ログ設定を更新
+        async function updateAudioLogConfig() {
+            try {
+                const config = {
+                    enabled: document.getElementById('audioLogEnabled').checked,
+                    output_dir: document.getElementById('outputDir').value,
+                    max_files: parseInt(document.getElementById('maxFiles').value)
+                };
+                
+                const response = await fetch('/config/audio-log', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showMessage('Succeeded to save settings', 'success');
+                    loadServerStatus();
+                } else {
+                    showMessage(`Failed to save settings: ${result.message}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Failed to update audio log settings:', error);
+                showMessage('Failed to update settings', 'error');
+            }
+        }
+        
+        // VAD 設定を取得
+        async function loadVADConfig() {
+            try {
+                const response = await fetch('/config/vad');
+                const data = await response.json();
+                const config = data.config;
+                
+                document.getElementById('vadThreshold').value = config.threshold;
+                document.getElementById('minSpeechDuration').value = config.min_speech_duration_ms;
+                document.getElementById('maxSpeechDuration').value = config.max_speech_duration_s;
+                document.getElementById('prefixSpeechPad').value = config.prefix_speech_pad_ms;
+                document.getElementById('silenceDuration').value = config.silence_duration_ms;
+                document.getElementById('chunkSize').value = config.chunk_size;
+                
+            } catch (error) {
+                console.error('Failed to load VAD settings:', error);
+                showVADMessage('Failed to load VAD settings', 'error');
+            }
+        }
+        
+        // VAD設定を更新
+        async function updateVADConfig() {
+            try {
+                const config = {
+                    threshold: parseFloat(document.getElementById('vadThreshold').value),
+                    min_speech_duration_ms: parseInt(document.getElementById('minSpeechDuration').value),
+                    max_speech_duration_s: parseFloat(document.getElementById('maxSpeechDuration').value),
+                    prefix_speech_pad_ms: parseInt(document.getElementById('prefixSpeechPad').value),
+                    silence_duration_ms: parseInt(document.getElementById('silenceDuration').value),
+                    chunk_size: parseInt(document.getElementById('chunkSize').value)
+                };
+                
+                const response = await fetch('/config/vad', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showVADMessage(`Succeeded to save VAD settings (Applies to ${result.active_sessions_updated} active sessions)`, 'success');
+                    loadServerStatus();
+                } else {
+                    showVADMessage(`Failed to save VAD settings: ${result.message}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Failed to update VAD settings:', error);
+                showVADMessage('Failed to update VAD settings', 'error');
+            }
+        }
+        
+        // VAD 設定をリセット
+        async function resetVADConfig() {
+            try {
+                if (!confirm('Reset VAD settings to default values?')) {
+                    return;
+                }
+                
+                const response = await fetch('/config/vad/reset', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showVADMessage(`VAD settings reset to default (Applies to ${result.active_sessions_updated} active sessions)`, 'success');
+                    loadVADConfig();
+                    loadServerStatus();
+                } else {
+                    showVADMessage(`Failed to reset VAD settings: ${result.message}`, 'error');
+                }
+                
+            } catch (error) {
+                console.error('Failed to reset VAD settings:', error);
+                showVADMessage('Failed to reset VAD settings', 'error');
+            }
+        }
+        
+        // 音声ファイル情報を取得
+        async function getAudioFileInfo(filename) {
+            try {
+                const response = await fetch(`/logs/audio/info/${filename}`);
+                const info = await response.json();
+                
+                console.log('Audio file info:', info);
+                
+                const expectedSamples = info.expected_samples || 0;
+                const actualSamples = info.audio_stats?.samples || 0;
+                const duration = info.audio_stats?.duration_seconds || 0;
+                const minValue = info.audio_stats?.min_value || 0;
+                const maxValue = info.audio_stats?.max_value || 0;
+                const rmsValue = info.audio_stats?.rms_value || 0;
+                
+                const sampleRate = info.metadata?.sample_rate || 'Unknown';
+                const channels = info.metadata?.channels || 'Unknown';
+                const dataType = info.metadata?.data_type || 'Unknown';
+                
+                const details = `
+File name: ${info.filename || 'Unknown'}
+File size: ${formatBytes(info.file_size_bytes || 0)}
+
+Audio format information:
+ - Sampling rate: ${sampleRate}Hz
+ - Number of channels: ${channels}
+ - Data type: ${dataType}
+
+Audio data statistics:
+ - Expected samples: ${expectedSamples.toLocaleString()}
+ - Actual samples: ${actualSamples.toLocaleString()}
+ - Duration: ${duration.toFixed(2)}秒
+ - Audio range: ${minValue.toFixed(4)} ～ ${maxValue.toFixed(4)}
+ - RMS: ${rmsValue.toFixed(4)}
+
+File information:
+ - Validity: ${info.is_valid ? 'OK' : 'NG'}
+ - Creation date: ${info.created_at ? new Date(info.created_at).toLocaleString() : 'Unknown'}
+                `.trim();
+                
+                alert(details);
+                
+            } catch (error) {
+                console.error('Failed to get audio file info:', error);
+                showMessage('Failed to get audio file info', 'error');
+            }
+        }
+
+        // 音声ファイルを再生
+        async function playAudioFile(filename) {
+            try {
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                    updatePlayButton(currentPlayingFile, 'stopped');
+                }
+                
+                updatePlayButton(filename, 'loading');
+                
+                const audioUrl = `/logs/audio/play/${filename}`;
+                const audio = new Audio();
+                currentAudio = audio;
+                currentPlayingFile = filename;
+                
+                audio.addEventListener('play', () => {
+                    updatePlayButton(filename, 'playing');
+                });
+                
+                audio.addEventListener('ended', () => {
+                    updatePlayButton(filename, 'stopped');
+                    currentAudio = null;
+                    currentPlayingFile = null;
+                });
+                
+                audio.addEventListener('error', (e) => {
+                    console.error('Audio playback error:', e);
+                    updatePlayButton(filename, 'error');
+                    showMessage('Failed to play audio file', 'error');
+                    currentAudio = null;
+                    currentPlayingFile = null;
+                });
+                
+                audio.src = audioUrl;
+                audio.preload = 'auto';
+                
+                const playPromise = audio.play();
+                if (playPromise !== undefined) {
+                    playPromise.then(() => {
+                        updatePlayButton(filename, 'playing');
+                    }).catch((error) => {
+                        console.error('Play promise rejected:', error);
+                        updatePlayButton(filename, 'error');
+                        showMessage(`Failed to start playing: ${error.message}`, 'error');
+                        currentAudio = null;
+                        currentPlayingFile = null;
+                    });
+                }
+                
+            } catch (error) {
+                console.error('Failed to play audio file:', error);
+                showMessage(`Failed to play audio file: ${error.message}`, 'error');
+                updatePlayButton(filename, 'error');
+                currentAudio = null;
+                currentPlayingFile = null;
+            }
+        }
+        
+        // 音声再生を停止
+        function stopAudioFile(filename) {
+            if (currentAudio && currentPlayingFile === filename) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                updatePlayButton(filename, 'stopped');
+                currentAudio = null;
+                currentPlayingFile = null;
+            }
+        }
+        
+        // 再生ボタンの状態を更新
+        function updatePlayButton(filename, state) {
+            const playButton = document.querySelector(`[data-filename="${filename}"] .play-btn`);
+            const stopButton = document.querySelector(`[data-filename="${filename}"] .stop-btn`);
+            const indicator = document.querySelector(`[data-filename="${filename}"] .status-indicator`);
+            
+            if (!playButton) return;
+            
+            playButton.style.display = 'inline-block';
+            playButton.disabled = false;
+            if (stopButton) stopButton.style.display = 'none';
+            
+            if (indicator) {
+                indicator.textContent = '';
+                indicator.className = 'status-indicator';
+            }
+            
+            switch (state) {
+                case 'loading':
+                    playButton.textContent = '📥';
+                    playButton.disabled = true;
+                    if (indicator) {
+                        indicator.textContent = 'Loading...';
+                        indicator.className = 'status-indicator loading-indicator';
+                    }
+                    break;
+                    
+                case 'playing':
+                    playButton.style.display = 'none';
+                    if (stopButton) {
+                        stopButton.style.display = 'inline-block';
+                    }
+                    if (indicator) {
+                        indicator.textContent = 'Playing';
+                        indicator.className = 'status-indicator playing-indicator';
+                    }
+                    break;
+                    
+                case 'stopped':
+                    playButton.textContent = '▶️';
+                    playButton.disabled = false;
+                    if (stopButton) stopButton.style.display = 'none';
+                    if (indicator) {
+                        indicator.textContent = '';
+                        indicator.className = 'status-indicator';
+                    }
+                    break;
+                    
+                case 'error':
+                    playButton.textContent = '❌';
+                    playButton.disabled = false;
+                    if (indicator) {
+                        indicator.textContent = 'Error';
+                        indicator.className = 'status-indicator loading-indicator';
+                    }
+                    break;
+            }
+        }
+        
+        // 音声ログファイル一覧を取得
+        async function loadAudioLogs() {
+            try {
+                const response = await fetch('/logs/audio/list');
+                const data = await response.json();
+                
+                const summaryDiv = document.getElementById('audioLogSummary');
+                const filesDiv = document.getElementById('audioLogFiles');
+                
+                if (data.error) {
+                    summaryDiv.innerHTML = `<div class="message error">${data.error}</div>`;
+                    filesDiv.innerHTML = '';
+                    return;
+                }
+                
+                summaryDiv.innerHTML = `
+                    <div class="message success">
+                        Total number of files: ${data.total} | 
+                        Total size: ${formatBytes(data.total_size_bytes)}
+                    </div>
+                `;
+                
+                filesDiv.innerHTML = '';
+                
+                if (data.files.length === 0) {
+                    filesDiv.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">No log file</div>';
+                    return;
+                }
+                
+                data.files.forEach(file => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'log-file-item';
+                    fileItem.setAttribute('data-filename', file.filename);
+                    
+                    const duration = file.duration_seconds ? `${file.duration_seconds.toFixed(2)}sec` : 'Unknown';
+                    const samples = file.samples ? `${file.samples.toLocaleString()}samples` : '';
+                    const sessionInfo = file.session_id ? `Session: ${file.session_id}` : '';
+                    
+                    fileItem.innerHTML = `
+                        <div class="file-info">
+                            <div class="file-name">${file.filename}</div>
+                            <div class="file-details">
+                                ${formatBytes(file.size_bytes)} | ${duration} | ${samples} | ${sessionInfo}
+                                <br>Creation Date: ${new Date(file.created_at).toLocaleString()}
+                            </div>
+                            <span class="status-indicator"></span>
+                        </div>
+                        <div class="file-actions">
+                            <button class="btn-small play play-btn" onclick="playAudioFile('${file.filename}')">▶️</button>
+                            <button class="btn-small stop stop-btn" onclick="stopAudioFile('${file.filename}')" style="display: none;">⏹️</button>
+                            <button class="btn-small" onclick="getAudioFileInfo('${file.filename}')" title="File information">ℹ️</button>
+                            <a href="/logs/audio/play/${file.filename}" class="btn-small download" download="${file.filename.replace('.raw', '.wav')}" title="Download as WAV file">💾</a>
+                            <a href="/logs/audio/download/${file.filename}" class="btn-small raw" download title="Download as RAW file">📄</a>
+                        </div>
+                    `;
+                    
+                    filesDiv.appendChild(fileItem);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load audio logs:', error);
+                showMessage('Failed to list audio log files', 'error');
+            }
+        }
+        
+        // メッセージ表示
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('configMessage');
+            messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+            
+            setTimeout(() => {
+                messageDiv.innerHTML = '';
+            }, 3000);
+        }
+        
+        // VADメッセージ表示
+        function showVADMessage(message, type) {
+            const messageDiv = document.getElementById('vadConfigMessage');
+            messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+            
+            setTimeout(() => {
+                messageDiv.innerHTML = '';
+            }, 5000);
+        }
+        
+        // 設定ファイル情報を表示
+        function showConfigFiles() {
+            const info = `
+For persistence of configuration files:
+
+🔧 Audio log configuration file: config/audio-log-config.json 
+🔧 VAD configuration file: config/vad-config.json
+
+These files are automatically saved when you change the settings and are automatically loaded when the server is restarted.
+
+File location:
+- Same location as server startup directory
+- Saved in JSON format
+- Last modified date and time are also recorded
+
+To edit manually, restart the server.
+            `.trim();
+            
+            alert(info);
+        }
+        
+        // バイト数をフォーマット
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>

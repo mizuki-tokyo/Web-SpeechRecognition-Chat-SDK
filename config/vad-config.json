@@ -1,0 +1,9 @@
+{
+    "threshold": 0.25,
+    "min_speech_duration_ms": 250,
+    "max_speech_duration_s": 30.0,
+    "prefix_speech_pad_ms": 300,
+    "silence_duration_ms": 500,
+    "chunk_size": 512,
+    "last_updated": "2025-07-08T16:02:32.657708"
+}

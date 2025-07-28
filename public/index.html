@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎤 Speech recognition test</title>
+
+    <script type="module" src="js/ui-elements/speech-indicator-element.js"></script>
+    <script type="module" src="js/ui-elements/fieldset-box-element.js"></script>
+    <script type="module" src="js/ui-elements/toggle-switch-element.js"></script>
+
+    <link href="css/index.css" rel="stylesheet"/>
+</head>
+<body>
+    <div class="container">
+        <h2>Speech Recognition</h2>
+
+        <fieldset-box title="Setting:">
+          <div class="setting-item-center-align">
+            <span>Language:</span>
+            <select id="languageSelect" class="language-select">
+              <option value="en">🇬🇧 English</option>
+              <option value="es">🇪🇸 Spanish</option>
+              <option value="fr">🇫🇷 French </option>
+              <option value="de">🇩🇪 German</option>
+              <option value="it">🇮🇹 Italian</option>  
+              <option value="ja">🇯🇵 Japanese</option>
+              <option value="ko">🇰🇷 Korean</option>
+              <option value="zh">🇨🇳 Chinese</option>
+            </select>
+          </div>
+
+          <div class="setting-item-top-align">
+            <span>Prompt:</span>
+            <textarea id="prompt" class="setting-prompt" placeholder="# Provide context"></textarea>
+          </div>
+
+          <div class="setting-item-center-align">
+            <span>Continuous recognition:</span>
+            <toggle-switch id="continuousRecognition"></toggle-switch>
+          </div>
+        </fieldset-box>
+
+
+        <button id="startButton" class="start-button">
+            ▶️  Start
+        </button>
+
+        <button id="stopButton" class="stop-button">
+            ️⏹️  Stop
+        </button>
+
+        <div class="status-container">
+          <speech-indicator id="speechIndicator"></speech-indicator>
+          <span id="status" class="status">
+            Press record to start
+          </span>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <fieldset-box class="result-box" title="Result:">
+          <div id="recognitionHistoryItems" class="history-items"></div>
+        </fieldset-box>
+
+        <fieldset-box class="log-box" title="Log:">
+          <div class="log" id="log"></div>
+        </fieldset-box>
+        
+    </div>
+
+    <script type="module">
+      import SpeechRecognizer from "./js/speech_recognition/speech-recognizer.js";
+
+      document.addEventListener('DOMContentLoaded', () => {
+          // DOM 要素の取得
+          const startButton = document.getElementById('startButton');
+          const stopButton = document.getElementById('stopButton');
+          const statusDiv = document.getElementById('status');
+          const speechIndicator = document.getElementById('speechIndicator');
+          const logDiv = document.getElementById('log');
+          const errorDiv = document.getElementById('error');
+          const recognitionHistoryItemsDiv = document.getElementById('recognitionHistoryItems');
+          const languageSelect = document.getElementById('languageSelect');
+          const promptTextarea = document.getElementById('prompt');
+          const continuousRecognitionToggleSwitch = document.getElementById('continuousRecognition');
+
+          stopButton.hidden = true;
+          promptTextarea.placeholder = 
+` # Provide context (e.g. recent transcript or domain terms)
+ # Bias recognition toward those terms
+ # Improves transcription accuracy
+ # Prompt limited to ~224 tokens; only last tokens used`;
+
+          const showLog = (message, className = '') => {
+              const timestamp = new Date().toLocaleTimeString();
+              logDiv.insertAdjacentHTML("beforeend", 
+                  `<div class='log-entry ${className}'>[${timestamp}] ${message}</div>`);
+              logDiv.scrollTop = logDiv.scrollHeight;
+          };
+
+          const allowControll = (enable) => {
+              startButton.disabled = enable;
+              stopButton.disabled = enable;
+
+              languageSelect.disabled = enable;
+              promptTextarea.disabled = enable;
+              speechRecognizer.disabled = enable;
+          };
+
+          const allowStart = (enable) => {
+              const disable = !enable;
+
+              startButton.disabled = disable;
+              stopButton.disabled = enable;
+
+              languageSelect.disabled = disable;
+              promptTextarea.disabled = disable;
+              speechRecognizer.disabled = disable;
+
+              startButton.hidden = disable;
+              stopButton.hidden = enable;
+          };
+
+          const updateRecordingStatus = (isRecording, isSpeaking=false) => {
+              if (isRecording == false) { // Idle
+                  statusDiv.textContent = "Not recording";
+                  statusDiv.classList.remove('recording');
+                  speechIndicator.stop();
+
+              } else if (isSpeaking == false) { // Recording
+                  statusDiv.textContent = "Recording";
+                  statusDiv.classList.add('recording');
+                  speechIndicator.stop();
+
+              } else { // Recording and Speaking
+                  statusDiv.textContent = "Recording";
+                  statusDiv.classList.add('recording');
+                  speechIndicator.start();
+              }
+          };
+
+          const updateStatus = (speechId, message , className) => {
+              try {
+                  let itemElement = recognitionHistoryItemsDiv.querySelector(`#sid-${speechId}`)
+                  if (itemElement != null) {
+                      itemElement.innerHTML = 
+                        `<div class='status ${className}'>${message}</div>`;
+                  } else {
+                      recognitionHistoryItemsDiv.insertAdjacentHTML("afterbegin",
+                        `<div class='history-item' id='sid-${speechId}'>
+                           <div class='status ${className}'>${message}</div>
+                         </div>`
+                      );
+                  }
+              } catch (error) {
+                  console.log(error)
+              }
+          };
+
+          const addToHistory = (speechId, text, segments, timestamp) => {
+
+              const timestampText = new Date(timestamp * 1000).toLocaleTimeString();
+              const segmentTexts = (segments && segments.length > 0)? segments.map(
+                  seg => `${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s: ${seg.text}`
+              ).join(' | ') : "";
+
+              let itemElement = recognitionHistoryItemsDiv.querySelector(`#sid-${speechId}`)
+              if (itemElement != null) {
+                  itemElement.innerHTML = 
+                   `<div class='timestamp'>${timestampText}</div>
+                    <div class='text'>${text}</div>
+                    <div class='segments'>Segment: ${segmentTexts}</div>`;
+              } else {
+                    recognitionHistoryItemsDiv.insertAdjacentHTML("afterbegin",
+                      `<div class='history-item' id='sid-${speechId}'>
+                         <div class='timestamp'>${timestampText}</div>
+                         <div class='text'>${text}</div>
+                         <div class='segments'>Segment: ${segmentTexts}</div>
+                       </div>`
+                    );
+              }
+
+              const itemElements = recognitionHistoryItemsDiv.querySelectorAll('.history-item');
+              if (itemElements.length > 10) {
+                  itemElements[itemElements.length - 1].remove();
+              }
+          };
+
+          continuousRecognitionToggleSwitch.onchange = async (e) => {
+              if (e.target.checked) {
+                  try {
+                      const response = await fetch('/continuous');
+                      const permission = await response.text();
+                      if (permission === "false") {
+                          window.alert("⚠️ Continuous speech recognition is not allowed due to server settings.");
+                          continuousRecognitionToggleSwitch.value = false;
+                      }
+                  } catch (error) {
+                      console.error('Failed to get continuous permission setting:', error);
+                  }
+              }
+          };
+
+          const speechRecognizer = new SpeechRecognizer();
+          speechRecognizer.lang = languageSelect.value;
+          speechRecognizer.logger = {
+              debug: (message) => { showLog(message); },
+              info: (message) => { showLog(message); },
+              log: (message) => { showLog(message); },
+              warn: (message) => { showLog(message); },
+              error: (message) => { showLog(message); }
+          };
+
+          startButton.addEventListener('click', async (e) => {
+              if (! speechRecognizer.isRecording()) {
+                  // Disable all operations
+                  allowControll(false);
+
+                  // Set up speech recognition and start.
+                  speechRecognizer.lang = languageSelect.value;
+                  speechRecognizer.prompt = promptTextarea.value
+                  speechRecognizer.continuous = continuousRecognitionToggleSwitch.checked;
+
+                  if (await speechRecognizer.start() == false) {
+                      // If startup fails, enable the start operation.
+                      allowStart(true);
+                  }
+              }
+          });
+
+          stopButton.addEventListener('click', async (e) => {
+              speechRecognizer.stop();
+          });
+
+          speechRecognizer.onstart = () => {
+              errorDiv.style.display = 'none';
+
+              allowStart(false);
+              updateRecordingStatus(true);
+          }
+
+          speechRecognizer.onend = () => {
+              allowStart(true);
+              updateRecordingStatus(false);
+          }
+
+          speechRecognizer.onspeechstart = (event) => {
+              const speechId = event.speech_id;
+              showLog('Speech detected', 'speech-detected');
+              updateStatus(speechId, 'Detecting speech...', 'detecting')
+              updateRecordingStatus(true, true);
+          }
+
+          speechRecognizer.onspeechend = (event) => {
+              const speechId = event.speech_id;
+              showLog('End of speech detected', 'speech-ended');
+              updateStatus(speechId, 'Processing speech recognition...', 'processing');
+
+              const isSpeaking = false;
+              // If continuous speech recognition is not enabled, 
+              // recording will end when the end of the speech is detected.
+              const isRecording = speechRecognizer.continuous;
+              updateRecordingStatus(isRecording, isSpeaking);
+      
+              if (isRecording == false) {
+                  allowStart(true);
+              }
+          }
+
+          speechRecognizer.onresult = (event) => {
+              const speechId = event.speech_id;
+              const result = event.result;
+              const recognizedText = result.text || '';        
+
+              showLog(`Speech recognition result: ${recognizedText}`, 'speech-detected');
+              addToHistory(speechId, recognizedText, result.segments, event.timestamp);
+          }
+
+          speechRecognizer.onnomatch = (event) => {
+              const speechId = event.speech_id;
+              const result = event.result;
+              const recognizedText = '(🔇 No speech was detected)';
+
+              showLog(`Speech recognition result: ${recognizedText}`, 'speech-detected');
+              addToHistory(speechId, recognizedText, result.segments, event.timestamp);
+          }
+
+          speechRecognizer.onerror = (event) => {
+
+              if (event.result) {
+                  const result = event.result;
+                  showLog(`Recognition error: ${result.error}`, 'speech-ended');
+              }
+
+              errorDiv.textContent = event.message;
+              errorDiv.style.display = 'block';
+          }
+      });
+
+    </script>
+</body>
+</html>
