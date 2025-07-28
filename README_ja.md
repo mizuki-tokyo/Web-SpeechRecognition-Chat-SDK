@@ -1,41 +1,65 @@
 
-# セットアップ手順
+# ブラウザ音声認識システム
 
-## 1. 仮想環境作成（推奨）
+このプロジェクトは、Webブラウザでリアルタイム音声認識を実現するオープンソースシステムです。
+Whisper音声認識エンジンとSilero VAD（Voice Activity Detection）を使用し、サーバーとクライアントから構成されています。
+
+## セットアップ手順
+
+### 1. 仮想環境作成（推奨）
+```bash
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate   # Windows
+```
 
-## 2. 依存関係インストール
+### 2. 依存関係インストール
+```bash
 pip install -r requirements.txt
+```
 
-## 3. 初回実行時のモデルダウンロード
-# WhisperとSilero VADのモデルが自動ダウンロードされます
-# インターネット接続が必要です
+### 3. 初回実行時のモデルダウンロード
+WhisperとSilero VADのモデルが自動ダウンロードされます（インターネット接続が必要）
 
-## 4. ディレクトリ構造作成
-mkdir static
-# index.htmlをstatic/index.htmlとして保存
-# admin.htmlをstatic/admin.htmlとして保存（管理画面）
-
-## 5. サーバー起動
+### 4. サーバー起動
+```bash
 python main.py
+```
 
-## 6. アクセス
-# メインアプリ: http://localhost:8000
-# 管理画面: http://localhost:8000/admin
+### 5. アクセス
+- メインアプリ: http://localhost:8000
+- 管理画面: http://localhost:8000/admin
 
-# プロジェクト構造
-audio-recognition-app/
-├── main.py              # FastAPIサーバー（VAD + Whisper + ログ機能）
-├── requirements.txt     # 依存関係
-├── static/
-│   ├── index.html      # メイン音声認識画面
-│   └── admin.html      # 管理画面
-├── audio_logs/         # 音声ログファイル（自動作成）
-│   ├── *.raw          # RAW音声ファイル
-│   └── *.meta         # メタデータファイル
-└── README.md
+## プロジェクト構造
+```
+speech-recognition-test/
+├── main.py                    # FastAPIサーバー（VAD + Whisper + 音声ログ機能）
+├── requirements.txt           # Python依存関係
+├── config/                    # 設定ファイル
+│   ├── app-config.env        # アプリケーション設定
+│   ├── audio-log-config.json # 音声ログ設定
+│   └── vad-config.json       # VAD設定
+├── src/                       # Pythonソースコード
+│   ├── http_speech_recognition_service.py    # メイン音声認識サービス
+│   ├── http_speech_recognition_admin_service.py # 管理機能サービス
+│   └── speech_recognition/    # 音声認識モジュール
+│       ├── audio_logger.py        # 音声ログ機能
+│       ├── speech_recognizer.py   # Whisper音声認識
+│       ├── whisper_processor.py   # Whisper処理
+│       ├── numpy_ring_buffer.py   # リングバッファ
+│       ├── audio_log_config.py    # 音声ログ設定
+│       └── vad_config.py          # VAD設定
+├── public/                    # Webクライアント
+│   ├── index.html            # メイン音声認識画面
+│   ├── admin.html            # 管理画面
+│   ├── css/                  # スタイルシート
+│   └── js/                   # JavaScript
+│       ├── speech_recognition/    # 音声認識関連JS
+│       └── ui-elements/          # UI要素
+└── audio_logs/               # 音声ログファイル（自動作成）
+    ├── *.raw                # RAW音声データ
+    └── *.meta               # メタデータファイル
+```
 
 # 新機能: 音声ログ機能
 
